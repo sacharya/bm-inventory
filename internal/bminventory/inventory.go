@@ -9,6 +9,8 @@ import (
 	"io/ioutil"
 	"net"
 	"net/http"
+	"os"
+	"os/exec"
 	"regexp"
 	"sort"
 	"strconv"
@@ -100,6 +102,12 @@ const ignitionConfigFormat = `{
 }
 }`
 
+// [TODO] need to find more generic way to set the openshift release image
+//https://mirror.openshift.com/pub/openshift-v4/clients/ocp-dev-preview/4.5.0-0.nightly-2020-05-21-015458/
+const OverrideImageName = "quay.io/openshift-release-dev/ocp-release-nightly@sha256:a9f7564e0f2edef2c15cc1da699ebd1d11f5acd717c3668940848b3fed0d13c7"
+
+// [TODO]  make sure that we use openshift-installer from the release image, otherwise the KubeconfigGenerator image must be updated here per openshift version
+
 type debugCmd struct {
 	cmd    string
 	stepID string
@@ -158,8 +166,12 @@ func generateDummyISOImage(jobApi job.API, b *bareMetalInventory, log logrus.Fie
 	dummyId := "00000000-0000-0000-0000-000000000000"
 	jobName := fmt.Sprintf("dummyimage-%s-%s", dummyId, time.Now().Format("20060102150405"))
 	imgName := fmt.Sprintf("discovery-image-%s", dummyId)
-	if err := jobApi.Create(context.Background(), b.createImageJob(jobName, imgName, "Dummy")); err != nil {
-		log.WithError(err).Errorf("failed to generate dummy ISO image")
+	if b.Config.Target == "disconnected" {
+		// TBD with MGMT-1175
+	} else {
+		if err := jobApi.Create(context.Background(), b.createImageJob(jobName, imgName, "Dummy")); err != nil {
+			log.WithError(err).Errorf("failed to generate dummy ISO image")
+		}
 	}
 }
 
@@ -711,14 +723,34 @@ func (b *bareMetalInventory) generateClusterInstallConfig(ctx context.Context, c
 		return errors.Wrapf(err, "failed to get install config for cluster %s", cluster.ID)
 	}
 	jobName := fmt.Sprintf("%s-%s-%s", kubeconfigPrefix, cluster.ID.String(), uuid.New().String())[:63]
-	if err := b.job.Create(ctx, b.createKubeconfigJob(&cluster, jobName, cfg)); err != nil {
-		log.WithError(err).Errorf("Failed to create kubeconfig generation job %s for cluster %s", jobName, cluster.ID)
-		return errors.Wrapf(err, "Failed to create kubeconfig generation job %s for cluster %s", jobName, cluster.ID)
-	}
+	if b.Config.Target == "disconnected" {
+		cmd := exec.Command("python", "./data/process-ignition-manifests-and-kubeconfig.py")
+		cmd.Env = append(os.Environ(),
+			"S3_ENDPOINT_URL="+b.S3EndpointURL,
+			"INSTALLER_CONFIG="+string(cfg),
+			"IMAGE_NAME="+jobName,
+			"S3_BUCKET="+b.S3Bucket,
+			"CLUSTER_ID="+cluster.ID.String(),
+			"OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="+OverrideImageName,
+			"aws_access_key_id="+b.AwsAccessKeyID,
+			"aws_secret_access_key="+b.AwsSecretAccessKey,
+			"WORK_DIR=/data",
+		)
+		var out bytes.Buffer
+		cmd.Stdout = &out
+		if err := cmd.Run(); err != nil {
+			log.Fatal(err)
+		}
+	} else {
+		if err := b.job.Create(ctx, b.createKubeconfigJob(&cluster, jobName, cfg)); err != nil {
+			log.WithError(err).Errorf("Failed to create kubeconfig generation job %s for cluster %s", jobName, cluster.ID)
+			return errors.Wrapf(err, "Failed to create kubeconfig generation job %s for cluster %s", jobName, cluster.ID)
+		}
 
-	if err := b.job.Monitor(ctx, jobName, b.Namespace); err != nil {
-		log.WithError(err).Errorf("Generating kubeconfig files %s failed for cluster %s", jobName, cluster.ID)
-		return errors.Wrapf(err, "Generating kubeconfig files %s failed for cluster %s", jobName, cluster.ID)
+		if err := b.job.Monitor(ctx, jobName, b.Namespace); err != nil {
+			log.WithError(err).Errorf("Generating kubeconfig files %s failed for cluster %s", jobName, cluster.ID)
+			return errors.Wrapf(err, "Generating kubeconfig files %s failed for cluster %s", jobName, cluster.ID)
+		}
 	}
 
 	return b.clusterApi.SetGeneratorVersion(&cluster, b.Config.KubeconfigGenerator, tx)
@@ -1392,10 +1424,6 @@ func (b *bareMetalInventory) EnableHost(ctx context.Context, params installer.En
 
 func (b *bareMetalInventory) createKubeconfigJob(cluster *common.Cluster, jobName string, cfg []byte) *batch.Job {
 	id := cluster.ID
-	// [TODO] need to find more generic way to set the openshift release image
-	//https://mirror.openshift.com/pub/openshift-v4/clients/ocp-dev-preview/4.5.0-0.nightly-2020-05-21-015458/
-	overrideImageName := "quay.io/openshift-release-dev/ocp-release-nightly@sha256:a9f7564e0f2edef2c15cc1da699ebd1d11f5acd717c3668940848b3fed0d13c7"
-	// [TODO]  make sure that we use openshift-installer from the release image, otherwise the KubeconfigGenerator image must be updated here per opnshift version
 	kubeConfigGeneratorImage := b.Config.KubeconfigGenerator
 	return &batch.Job{
 		TypeMeta: meta.TypeMeta{
@@ -1443,7 +1471,7 @@ func (b *bareMetalInventory) createKubeconfigJob(cluster *common.Cluster, jobNam
 								},
 								{
 									Name:  "OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE",
-									Value: overrideImageName, //TODO: change this to match the cluster openshift version
+									Value: OverrideImageName, //TODO: change this to match the cluster openshift version
 								},
 								{
 									Name:  "aws_access_key_id",
