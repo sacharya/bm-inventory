@@ -17,6 +17,7 @@ endif
 
 SERVICE := $(or ${SERVICE},quay.io/ocpmetal/bm-inventory:latest)
 OBJEXP := $(or ${OBJEXP},quay.io/ocpmetal/s3-object-expirer:latest)
+DEPLOYEMNT := $(or ${DEPLOYMENT},quay.io/ocpmetal/bm-inventory-deployemnt:latest)
 GIT_REVISION := $(shell git rev-parse HEAD)
 APPLY_NAMESPACE := $(or ${APPLY_NAMESPACE},True)
 
@@ -50,6 +51,13 @@ generate-from-swagger:
 update: build
 	GIT_REVISION=${GIT_REVISION} docker build --build-arg GIT_REVISION -f Dockerfile.bm-inventory . -t $(SERVICE)
 	docker push $(SERVICE)
+
+deployment-pip:
+	cd tools; python setup.py sdist
+
+update-deployment-image: deployment-pip
+	GIT_REVISION=${GIT_REVISION} docker build --build-arg GIT_REVISION -f Dockerfile.bm-inventory-deployemnt . -t $(DEPLOYMENT)
+	docker push $(DEPLOYMENT)
 
 update-expirer: build
 	GIT_REVISION=${GIT_REVISION} docker build --build-arg GIT_REVISION -f Dockerfile.s3-object-expirer . -t $(OBJEXP)
