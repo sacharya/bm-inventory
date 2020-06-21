@@ -1,0 +1,12 @@
+AUTHORS
+ChangeLog
+setup.cfg
+setup.py
+assisted_installer_deployment.egg-info/PKG-INFO
+assisted_installer_deployment.egg-info/SOURCES.txt
+assisted_installer_deployment.egg-info/dependency_links.txt
+assisted_installer_deployment.egg-info/entry_points.txt
+assisted_installer_deployment.egg-info/not-zip-safe
+assisted_installer_deployment.egg-info/pbr.json
+assisted_installer_deployment.egg-info/requires.txt
+assisted_installer_deployment.egg-info/top_level.txt

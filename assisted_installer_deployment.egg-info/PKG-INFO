@@ -1,0 +1,10 @@
+Metadata-Version: 1.0
+Name: assisted-installer-deployment
+Version: 1.0.1.dev7
+Summary: Openshift assisted installer deployment tools
+Home-page: https://github.com/filanov/bm-inventory.git
+Author: Eran Cohen
+Author-email: eranco@redhat.com
+License: Apache-2
+Description: UNKNOWN
+Platform: UNKNOWN

@@ -1,0 +1,13 @@
+[console_scripts]
+clear_deployment = tools.clear_deployment:main
+deploy_assisted_installer = tools.deploy_assisted_installer:main
+deploy_assisted_installer_configmap = tools.deploy_assisted_installer_configmap:main
+deploy_inventory_service = tools.deploy_inventory_service:main
+deploy_mariadb = tools.deploy_mariadb:main
+deploy_namespace = tools.deploy_namespace:main
+deploy_role = tools.deploy_role:main
+deploy_s3 = tools.deploy_s3:main
+deploy_s3_object_expirer = tools.deploy_s3_object_expirer:main
+deploy_scality_configmap = tools.deploy_scality_configmap:main
+deploy_ui = tools.deploy_ui:main
+
