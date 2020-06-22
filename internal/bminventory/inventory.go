@@ -9,8 +9,6 @@ import (
 	"io/ioutil"
 	"net"
 	"net/http"
-	"os"
-	"os/exec"
 	"regexp"
 	"sort"
 	"strconv"
@@ -166,12 +164,8 @@ func generateDummyISOImage(jobApi job.API, b *bareMetalInventory, log logrus.Fie
 	dummyId := "00000000-0000-0000-0000-000000000000"
 	jobName := fmt.Sprintf("dummyimage-%s-%s", dummyId, time.Now().Format("20060102150405"))
 	imgName := fmt.Sprintf("discovery-image-%s", dummyId)
-	if b.Config.Target == "disconnected" {
-		// TBD with MGMT-1175
-	} else {
-		if err := jobApi.Create(context.Background(), b.createImageJob(jobName, imgName, "Dummy")); err != nil {
-			log.WithError(err).Errorf("failed to generate dummy ISO image")
-		}
+	if err := jobApi.Create(context.Background(), b.createImageJob(jobName, imgName, "Dummy")); err != nil {
+		log.WithError(err).Errorf("failed to generate dummy ISO image")
 	}
 }
 
@@ -723,34 +717,14 @@ func (b *bareMetalInventory) generateClusterInstallConfig(ctx context.Context, c
 		return errors.Wrapf(err, "failed to get install config for cluster %s", cluster.ID)
 	}
 	jobName := fmt.Sprintf("%s-%s-%s", kubeconfigPrefix, cluster.ID.String(), uuid.New().String())[:63]
-	if b.Config.Target == "disconnected" {
-		cmd := exec.Command("python", "./data/process-ignition-manifests-and-kubeconfig.py")
-		cmd.Env = append(os.Environ(),
-			"S3_ENDPOINT_URL="+b.S3EndpointURL,
-			"INSTALLER_CONFIG="+string(cfg),
-			"IMAGE_NAME="+jobName,
-			"S3_BUCKET="+b.S3Bucket,
-			"CLUSTER_ID="+cluster.ID.String(),
-			"OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="+OverrideImageName,
-			"aws_access_key_id="+b.AwsAccessKeyID,
-			"aws_secret_access_key="+b.AwsSecretAccessKey,
-			"WORK_DIR=/data",
-		)
-		var out bytes.Buffer
-		cmd.Stdout = &out
-		if err := cmd.Run(); err != nil {
-			log.Fatal(err)
-		}
-	} else {
-		if err := b.job.Create(ctx, b.createKubeconfigJob(&cluster, jobName, cfg)); err != nil {
-			log.WithError(err).Errorf("Failed to create kubeconfig generation job %s for cluster %s", jobName, cluster.ID)
-			return errors.Wrapf(err, "Failed to create kubeconfig generation job %s for cluster %s", jobName, cluster.ID)
-		}
+	if err := b.job.Create(ctx, b.createKubeconfigJob(&cluster, jobName, cfg)); err != nil {
+		log.WithError(err).Errorf("Failed to create kubeconfig generation job %s for cluster %s", jobName, cluster.ID)
+		return errors.Wrapf(err, "Failed to create kubeconfig generation job %s for cluster %s", jobName, cluster.ID)
+	}
 
-		if err := b.job.Monitor(ctx, jobName, b.Namespace); err != nil {
-			log.WithError(err).Errorf("Generating kubeconfig files %s failed for cluster %s", jobName, cluster.ID)
-			return errors.Wrapf(err, "Generating kubeconfig files %s failed for cluster %s", jobName, cluster.ID)
-		}
+	if err := b.job.Monitor(ctx, jobName, b.Namespace); err != nil {
+		log.WithError(err).Errorf("Generating kubeconfig files %s failed for cluster %s", jobName, cluster.ID)
+		return errors.Wrapf(err, "Generating kubeconfig files %s failed for cluster %s", jobName, cluster.ID)
 	}
 
 	return b.clusterApi.SetGeneratorVersion(&cluster, b.Config.KubeconfigGenerator, tx)
