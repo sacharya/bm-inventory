@@ -575,6 +575,64 @@ func init() {
         }
       }
     },
+    "/clusters/{cluster_id}/free_addresses": {
+      "get": {
+        "tags": [
+          "installer"
+        ],
+        "summary": "Retrieves the free address list for a network.",
+        "operationId": "GetFreeAddresses",
+        "parameters": [
+          {
+            "type": "string",
+            "format": "uuid",
+            "name": "cluster_id",
+            "in": "path",
+            "required": true
+          },
+          {
+            "pattern": "^([0-9]{1,3}\\.){3}[0-9]{1,3}\\/[0-9]|[1-2][0-9]|3[0-2]?$",
+            "type": "string",
+            "name": "network",
+            "in": "query",
+            "required": true
+          },
+          {
+            "maximum": 8000,
+            "minimum": 1,
+            "type": "integer",
+            "default": 8000,
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "type": "string",
+            "name": "prefix",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "schema": {
+              "$ref": "#/definitions/free-addresses-list"
+            }
+          },
+          "404": {
+            "description": "Error.",
+            "schema": {
+              "$ref": "#/definitions/error"
+            }
+          },
+          "500": {
+            "description": "Error.",
+            "schema": {
+              "$ref": "#/definitions/error"
+            }
+          }
+        }
+      }
+    },
     "/clusters/{cluster_id}/hosts": {
       "get": {
         "tags": [
@@ -1689,6 +1747,13 @@ func init() {
         "$ref": "#/definitions/event"
       }
     },
+    "free-addresses-list": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "format": "ipv4"
+      }
+    },
     "free_addresses_request": {
       "type": "array",
       "items": {
@@ -2756,6 +2821,64 @@ func init() {
             }
           },
           "409": {
+            "description": "Error.",
+            "schema": {
+              "$ref": "#/definitions/error"
+            }
+          },
+          "500": {
+            "description": "Error.",
+            "schema": {
+              "$ref": "#/definitions/error"
+            }
+          }
+        }
+      }
+    },
+    "/clusters/{cluster_id}/free_addresses": {
+      "get": {
+        "tags": [
+          "installer"
+        ],
+        "summary": "Retrieves the free address list for a network.",
+        "operationId": "GetFreeAddresses",
+        "parameters": [
+          {
+            "type": "string",
+            "format": "uuid",
+            "name": "cluster_id",
+            "in": "path",
+            "required": true
+          },
+          {
+            "pattern": "^([0-9]{1,3}\\.){3}[0-9]{1,3}\\/[0-9]|[1-2][0-9]|3[0-2]?$",
+            "type": "string",
+            "name": "network",
+            "in": "query",
+            "required": true
+          },
+          {
+            "maximum": 8000,
+            "minimum": 1,
+            "type": "integer",
+            "default": 8000,
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "type": "string",
+            "name": "prefix",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "schema": {
+              "$ref": "#/definitions/free-addresses-list"
+            }
+          },
+          "404": {
             "description": "Error.",
             "schema": {
               "$ref": "#/definitions/error"
@@ -3885,6 +4008,13 @@ func init() {
       "type": "array",
       "items": {
         "$ref": "#/definitions/event"
+      }
+    },
+    "free-addresses-list": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "format": "ipv4"
       }
     },
     "free_addresses_request": {
