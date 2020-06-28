@@ -1242,7 +1242,7 @@ func init() {
         "machine_network_cidr": {
           "description": "A CIDR that all hosts belonging to the cluster should have an interfaces with IP address that belongs to this CIDR. The api_vip belongs to this CIDR.",
           "type": "string",
-          "pattern": "^([0-9]{1,3}\\.){3}[0-9]{1,3}\\/[0-9]|[1-2][0-9]|3[0-2]?$"
+          "pattern": "^([0-9]{1,3}\\.){3}[0-9]{1,3}\\/[0-9]|[1-2][0-9]|3[0-2]?$."
         },
         "name": {
           "description": "Name of the OpenShift cluster.",
@@ -1277,7 +1277,8 @@ func init() {
             "ready",
             "error",
             "installing",
-            "installed"
+            "installed",
+            "preparing-for-installation"
           ]
         },
         "status_info": {
@@ -3453,7 +3454,7 @@ func init() {
         "machine_network_cidr": {
           "description": "A CIDR that all hosts belonging to the cluster should have an interfaces with IP address that belongs to this CIDR. The api_vip belongs to this CIDR.",
           "type": "string",
-          "pattern": "^([0-9]{1,3}\\.){3}[0-9]{1,3}\\/[0-9]|[1-2][0-9]|3[0-2]?$"
+          "pattern": "^([0-9]{1,3}\\.){3}[0-9]{1,3}\\/[0-9]|[1-2][0-9]|3[0-2]?$."
         },
         "name": {
           "description": "Name of the OpenShift cluster.",
@@ -3488,7 +3489,8 @@ func init() {
             "ready",
             "error",
             "installing",
-            "installed"
+            "installed",
+            "preparing-for-installation"
           ]
         },
         "status_info": {

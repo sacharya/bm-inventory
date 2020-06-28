@@ -80,7 +80,7 @@ type Cluster struct {
 	Kind *string `json:"kind"`
 
 	// A CIDR that all hosts belonging to the cluster should have an interfaces with IP address that belongs to this CIDR. The api_vip belongs to this CIDR.
-	// Pattern: ^([0-9]{1,3}\.){3}[0-9]{1,3}\/[0-9]|[1-2][0-9]|3[0-2]?$
+	// Pattern: ^([0-9]{1,3}\.){3}[0-9]{1,3}\/[0-9]|[1-2][0-9]|3[0-2]?$.
 	MachineNetworkCidr string `json:"machine_network_cidr,omitempty"`
 
 	// Name of the OpenShift cluster.
@@ -102,7 +102,7 @@ type Cluster struct {
 
 	// Status of the OpenShift cluster.
 	// Required: true
-	// Enum: [insufficient ready error installing installed]
+	// Enum: [insufficient ready error installing installed preparing-for-installation]
 	Status *string `json:"status"`
 
 	// Additional information pertaining to the status of the OpenShift cluster.
@@ -439,7 +439,7 @@ func (m *Cluster) validateMachineNetworkCidr(formats strfmt.Registry) error {
 		return nil
 	}
 
-	if err := validate.Pattern("machine_network_cidr", "body", string(m.MachineNetworkCidr), `^([0-9]{1,3}\.){3}[0-9]{1,3}\/[0-9]|[1-2][0-9]|3[0-2]?$`); err != nil {
+	if err := validate.Pattern("machine_network_cidr", "body", string(m.MachineNetworkCidr), `^([0-9]{1,3}\.){3}[0-9]{1,3}\/[0-9]|[1-2][0-9]|3[0-2]?$.`); err != nil {
 		return err
 	}
 
@@ -503,7 +503,7 @@ var clusterTypeStatusPropEnum []interface{}
 
 func init() {
 	var res []string
-	if err := json.Unmarshal([]byte(`["insufficient","ready","error","installing","installed"]`), &res); err != nil {
+	if err := json.Unmarshal([]byte(`["insufficient","ready","error","installing","installed","preparing-for-installation"]`), &res); err != nil {
 		panic(err)
 	}
 	for _, v := range res {
@@ -527,6 +527,9 @@ const (
 
 	// ClusterStatusInstalled captures enum value "installed"
 	ClusterStatusInstalled string = "installed"
+
+	// ClusterStatusPreparingForInstallation captures enum value "preparing-for-installation"
+	ClusterStatusPreparingForInstallation string = "preparing-for-installation"
 )
 
 // prop value enum
