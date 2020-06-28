@@ -3,19 +3,18 @@ package cluster
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"time"
 
-	"github.com/pkg/errors"
-
 	"github.com/filanov/bm-inventory/internal/common"
-	"github.com/thoas/go-funk"
-
 	"github.com/filanov/bm-inventory/internal/events"
-
+	logutil "github.com/filanov/bm-inventory/pkg/log"
 	"github.com/go-openapi/strfmt"
 	"github.com/go-openapi/swag"
 	"github.com/jinzhu/gorm"
+	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
+	"github.com/thoas/go-funk"
 )
 
 const minHostsNeededForInstallation = 3
@@ -53,6 +52,8 @@ type API interface {
 	VerifyClusterUpdatability(c *common.Cluster) (err error)
 	AcceptRegistration(c *common.Cluster) (err error)
 	SetGeneratorVersion(c *common.Cluster, version string, db *gorm.DB) error
+	PrepareForInstallation(ctx context.Context, c *common.Cluster) error
+	HandlePreInstallError(ctx context.Context, c *common.Cluster, err error)
 }
 
 type Manager struct {
@@ -225,4 +226,27 @@ func (m *Manager) VerifyClusterUpdatability(c *common.Cluster) (err error) {
 func (m *Manager) SetGeneratorVersion(c *common.Cluster, version string, db *gorm.DB) error {
 	return db.Model(&common.Cluster{}).Where("id = ?", c.ID.String()).
 		Update("ignition_generator_version", version).Error
+}
+
+func (m *Manager) PrepareForInstallation(ctx context.Context, c *common.Cluster) error {
+	clusterStatus := swag.StringValue(c.Status)
+	allowedStatuses := []string{clusterStatusReady}
+	if !funk.ContainsString(allowedStatuses, clusterStatus) {
+		return common.NewApiError(http.StatusBadRequest,
+			errors.Errorf("Cluster is in %s state, cluster can be prepared for installation only in one of %s states",
+				clusterStatus, allowedStatuses))
+	}
+
+	_, err := updateState(clusterStatusPrepareForInstallation, statusInfoPreparingForInstallation, c, m.db,
+		logutil.FromContext(ctx, m.log))
+	return err
+}
+
+func (m *Manager) HandlePreInstallError(ctx context.Context, c *common.Cluster, installErr error) {
+	log := logutil.FromContext(ctx, m.log)
+	if _, err := updateState(clusterStatusError, installErr.Error(), c, m.db, log); err != nil {
+		log.WithError(err).Errorf("failed to set cluster to %s", clusterStatusError)
+	}
+	log.Infof("Successfully handled pre-installation error, cluster %s changed state to %s",
+		c.ID.String(), clusterStatusError)
 }
