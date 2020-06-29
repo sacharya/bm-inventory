@@ -9,6 +9,8 @@ import (
 	"io/ioutil"
 	"net"
 	"net/http"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"text/template"
@@ -486,7 +488,7 @@ func (c *clusterInstaller) verifyClusterNetworkConfig(cluster *common.Cluster, t
 		return common.NewApiError(http.StatusBadRequest,
 			fmt.Errorf("Cluster machine CIDR %s is different than the calculated CIDR %s", cluster.MachineNetworkCidr, cidr))
 	}
-	if err = network.VerifyVips(cluster.MachineNetworkCidr, cluster.APIVip, cluster.IngressVip, true); err != nil {
+	if err = network.VerifyVips(cluster.Hosts, cluster.MachineNetworkCidr, cluster.APIVip, cluster.IngressVip, true, c.log); err != nil {
 		return common.NewApiError(http.StatusBadRequest, err)
 	}
 	machineCidrHosts, err := network.GetMachineCIDRHosts(c.log, cluster)
@@ -762,7 +764,7 @@ func (b *bareMetalInventory) UpdateCluster(ctx context.Context, params installer
 	machineCidrUpdated := machineCidr != cluster.MachineNetworkCidr
 	updates["machine_network_cidr"] = machineCidr
 
-	err = network.VerifyVips(machineCidr, apiVip, ingressVip, false)
+	err = network.VerifyVips(cluster.Hosts, machineCidr, apiVip, ingressVip, false, log)
 	if err != nil {
 		log.WithError(err).Errorf("VIP verification failed for cluster: %s", params.ClusterID)
 		return installer.NewUpdateClusterBadRequest().WithPayload(common.GenerateError(http.StatusBadRequest, err))
@@ -1546,4 +1548,67 @@ func setPullSecret(cluster *common.Cluster, pullSecret string) {
 	} else {
 		cluster.PullSecretSet = false
 	}
+}
+
+func ipAsUint(ipStr string, log logrus.FieldLogger) uint64 {
+	parts := strings.Split(ipStr, ".")
+	if len(parts) != 4 {
+		log.Warnf("Invalid ip %s", ipStr)
+		return 0
+	}
+	var result uint64 = 0
+	for _, p := range parts {
+		result = result << 8
+		converted, err := strconv.ParseUint(p, 10, 64)
+		if err != nil {
+			log.WithError(err).Warnf("Conversion of %s to uint", p)
+			return 0
+		}
+		result += converted
+	}
+	return result
+}
+
+func applyLimit(ret models.FreeAddressesList, limitParam *int64) models.FreeAddressesList {
+	if limitParam != nil && *limitParam >= 0 && *limitParam < int64(len(ret)) {
+		return ret[:*limitParam]
+	}
+	return ret
+}
+
+func (b *bareMetalInventory) getFreeAddresses(params installer.GetFreeAddressesParams, log logrus.FieldLogger) middleware.Responder {
+	var hosts []*models.Host
+	err := b.db.Select("free_addresses").Find(&hosts, "cluster_id = ? and status in (?)", params.ClusterID.String(), []string{host.HostStatusInsufficient, host.HostStatusKnown}).Error
+	if err != nil {
+		return common.NewApiError(http.StatusInternalServerError, errors.Wrapf(err, "Error retreiving hosts for cluster %s", params.ClusterID.String()))
+	}
+	if len(hosts) == 0 {
+		return common.NewApiError(http.StatusNotFound, errors.Errorf("No hosts where found for cluster %s", params.ClusterID))
+	}
+	resultingSet := network.MakeFreeAddressesSet(hosts, params.Network, params.Prefix, log)
+
+	ret := models.FreeAddressesList{}
+	for a := range resultingSet {
+		ret = append(ret, a)
+	}
+
+	// Sort addresses
+	sort.Slice(ret, func(i, j int) bool {
+		return ipAsUint(ret[i].String(), log) < ipAsUint(ret[j].String(), log)
+	})
+
+	ret = applyLimit(ret, params.Limit)
+
+	return installer.NewGetFreeAddressesOK().WithPayload(ret)
+}
+
+func (b *bareMetalInventory) GetFreeAddresses(ctx context.Context, params installer.GetFreeAddressesParams) middleware.Responder {
+	log := logutil.FromContext(ctx, b.log)
+
+	responder := b.getFreeAddresses(params, log)
+	switch responderValue := responder.(type) {
+	case *common.ApiErrorResponse:
+		log.WithError(responderValue).Warn("GetFreeAddresses")
+	}
+	return responder
 }
