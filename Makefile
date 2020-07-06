@@ -176,20 +176,20 @@ subsystem-clean:
 clear-deployment:
 	-python3 ./tools/clear_deployment.py --delete-namespace $(APPLY_NAMESPACE) || true
 
-deploy-disconnected:
+deploy-onprem:
 	podman pod create --name assisted-installer -p 3306,8000,8090,8080
 	podman volume create s3-volume
-	podman run -dt --pod assisted-installer --env-file disconnected-environment -v s3-volume:/mnt/data:rw --name s3 scality/s3server:latest
-	podman run -dt --pod assisted-installer --env-file disconnected-environment --name mariadb mariadb:latest
+	podman run -dt --pod assisted-installer --env-file onprem-environment -v s3-volume:/mnt/data:rw --name s3 scality/s3server:latest
+	podman run -dt --pod assisted-installer --env-file onprem-environment --name mariadb mariadb:latest
 	sleep 15
-	podman run -dt --pod assisted-installer --env-file disconnected-environment --name installer ${SERVICE}
-	podman run -dt --pod assisted-installer --env-file disconnected-environment --name ui quay.io/ocpmetal/ocp-metal-ui:latest
+	podman run -dt --pod assisted-installer --env-file onprem --name installer ${SERVICE}
+	podman run -dt --pod assisted-installer --env-file onprem-environment --name ui quay.io/ocpmetal/ocp-metal-ui:latest
 
-clean-disconnected:
+clean-onprem:
 	podman pod rm -f assisted-installer
 	podman volume rm s3-volume
 
-test-disconnected:
+test-onprem:
 	INVENTORY=127.0.0.1:8090 \
 	DB_HOST=127.0.0.1 \
 	DB_PORT=3306 \

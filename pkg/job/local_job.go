@@ -3,16 +3,13 @@ package job
 import (
 	"bytes"
 	"context"
-	"log"
 	"os"
 	"os/exec"
-	"strings"
 
+	"github.com/filanov/bm-inventory/internal/common"
 	logutil "github.com/filanov/bm-inventory/pkg/log"
+	"github.com/filanov/bm-inventory/restapi/operations/installer"
 	"github.com/sirupsen/logrus"
-	batch "k8s.io/api/batch/v1"
-	"k8s.io/apimachinery/pkg/runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 type localJob struct {
@@ -27,40 +24,19 @@ func NewLocalJob(log logrus.FieldLogger, cfg Config) *localJob {
 	}
 }
 
-func (j *localJob) Create(ctx context.Context, obj runtime.Object, opts ...client.CreateOption) error {
+// creates install config
+func (j *localJob) GenerateInstallConfig(ctx context.Context, cluster common.Cluster, cfg []byte) error {
 	log := logutil.FromContext(ctx, j.log)
-	job := obj.(*batch.Job)
-	if job.TypeMeta.Kind != "Job" {
-		// Skip if not a Job
-		return nil
-	}
-
-	jobName := job.ObjectMeta.Name
-
-	if strings.HasPrefix(jobName, "generate-kubeconfig") {
-		log.Infof("Executing generate-kubeconfig locally for job %s", jobName)
-		return j.executeKubeconfigJob(job)
-	}
-
-	if strings.HasPrefix(jobName, "createimage") || strings.HasPrefix(jobName, "dummyimage") {
-		log.Infof("Creating ISO locally for job %s", jobName)
-		return j.executeImageJob(job)
-	}
-
-	return nil
-}
-
-func (j *localJob) executeKubeconfigJob(job *batch.Job) error {
 	cmd := exec.Command("python", "./data/process-ignition-manifests-and-kubeconfig.py")
 	cmd.Env = append(os.Environ(),
-		"S3_ENDPOINT_URL="+job.Spec.Template.Spec.Containers[0].Env[0].Value,
-		"INSTALLER_CONFIG="+job.Spec.Template.Spec.Containers[0].Env[1].Value,
-		"IMAGE_NAME="+job.Spec.Template.Spec.Containers[0].Env[2].Value,
-		"S3_BUCKET="+job.Spec.Template.Spec.Containers[0].Env[3].Value,
-		"CLUSTER_ID="+job.Spec.Template.Spec.Containers[0].Env[4].Value,
-		"OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="+job.Spec.Template.Spec.Containers[0].Env[5].Value,
-		"aws_access_key_id="+job.Spec.Template.Spec.Containers[0].Env[6].Value,
-		"aws_secret_access_key="+job.Spec.Template.Spec.Containers[0].Env[7].Value,
+		"S3_ENDPOINT_URL="+j.Config.S3EndpointURL,
+		"INSTALLER_CONFIG="+string(cfg),
+		"IMAGE_NAME="+j.Config.KubeconfigGenerator,
+		"S3_BUCKET="+j.Config.S3Bucket,
+		"CLUSTER_ID="+cluster.ID.String(),
+		"OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="+OverrideImageName,
+		"aws_access_key_id="+j.Config.AwsAccessKeyID,
+		"aws_secret_access_key="+j.Config.AwsSecretAccessKey,
 		"WORK_DIR=/data",
 	)
 	var out bytes.Buffer
@@ -69,22 +45,11 @@ func (j *localJob) executeKubeconfigJob(job *batch.Job) error {
 		log.Fatal(err)
 		return err
 	}
+	log.Println(cmd.Stdout)
 	return nil
 }
 
-func (j *localJob) executeImageJob(job *batch.Job) error {
-	// TBD with MGMT-1175
-	return nil
-}
-
-func (j *localJob) Monitor(ctx context.Context, name, namespace string) error {
-	log := logutil.FromContext(ctx, j.log)
-	log.Info("localJob.Monitor is NOOP")
-	return nil
-}
-
-func (j *localJob) Delete(ctx context.Context, name, namespace string) error {
-	log := logutil.FromContext(ctx, j.log)
-	log.Info("localJob.Delete is NOOP")
+func (j *localJob) GenerateISO(ctx context.Context, cluster common.Cluster, jobName string, imageName string, ignitionConfig string) *installer.GenerateClusterISOInternalServerError {
+	// TBD MGMT-1174
 	return nil
 }

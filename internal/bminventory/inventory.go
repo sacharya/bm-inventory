@@ -40,14 +40,9 @@ import (
 	"github.com/jinzhu/gorm"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
-	batch "k8s.io/api/batch/v1"
-	core "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
-	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/clientcmd"
 )
 
-const kubeconfigPrefix = "generate-kubeconfig"
 const kubeconfig = "kubeconfig"
 
 const (
@@ -66,7 +61,6 @@ var (
 
 type Config struct {
 	ImageBuilder        string            `envconfig:"IMAGE_BUILDER" default:"quay.io/ocpmetal/installer-image-build:latest"`
-	ImageBuilderCmd     string            `envconfig:"IMAGE_BUILDER_CMD" default:"echo hello"`
 	AgentDockerImg      string            `envconfig:"AGENT_DOCKER_IMAGE" default:"quay.io/ocpmetal/agent:latest"`
 	KubeconfigGenerator string            `envconfig:"KUBECONFIG_GENERATE_IMAGE" default:"quay.io/ocpmetal/ignition-manifests-and-kubeconfig-generate:stable"` // TODO: update the latest once the repository has git workflow
 	InventoryURL        string            `envconfig:"INVENTORY_URL" default:"10.35.59.36"`
@@ -75,13 +69,8 @@ type Config struct {
 	S3Bucket            string            `envconfig:"S3_BUCKET" default:"test"`
 	AwsAccessKeyID      string            `envconfig:"AWS_ACCESS_KEY_ID" default:"accessKey1"`
 	AwsSecretAccessKey  string            `envconfig:"AWS_SECRET_ACCESS_KEY" default:"verySecretKey1"`
-	Namespace           string            `envconfig:"NAMESPACE" default:"assisted-installer"`
 	UseK8s              bool              `envconfig:"USE_K8S" default:"true"` // TODO remove when jobs running deprecated
 	BaseDNSDomains      map[string]string `envconfig:"BASE_DNS_DOMAINS" default:""`
-	JobCPULimit         string            `envconfig:"JOB_CPU_LIMIT" default:"500m"`
-	JobMemoryLimit      string            `envconfig:"JOB_MEMORY_LIMIT" default:"1000Mi"`
-	JobCPURequests      string            `envconfig:"JOB_CPU_REQUESTS" default:"300m"`
-	JobMemoryRequests   string            `envconfig:"JOB_MEMORY_REQUESTS" default:"400Mi"`
 }
 
 const ignitionConfigFormat = `{
@@ -100,12 +89,6 @@ const ignitionConfigFormat = `{
 }
 }`
 
-// [TODO] need to find more generic way to set the openshift release image
-//https://mirror.openshift.com/pub/openshift-v4/clients/ocp-dev-preview/4.5.0-0.nightly-2020-05-21-015458/
-const OverrideImageName = "quay.io/openshift-release-dev/ocp-release-nightly@sha256:a9f7564e0f2edef2c15cc1da699ebd1d11f5acd717c3668940848b3fed0d13c7"
-
-// [TODO]  make sure that we use openshift-installer from the release image, otherwise the KubeconfigGenerator image must be updated here per openshift version
-
 type debugCmd struct {
 	cmd    string
 	stepID string
@@ -113,12 +96,11 @@ type debugCmd struct {
 
 type bareMetalInventory struct {
 	Config
-	imageBuildCmd []string
 	db            *gorm.DB
 	debugCmdMap   map[strfmt.UUID]debugCmd
 	debugCmdMux   sync.Mutex
 	log           logrus.FieldLogger
-	job           job.API
+	generator     job.ISOInstallConfigGenerator
 	hostApi       host.API
 	clusterApi    cluster.API
 	eventsHandler events.Handler
@@ -133,7 +115,7 @@ func NewBareMetalInventory(
 	hostApi host.API,
 	clusterApi cluster.API,
 	cfg Config,
-	jobApi job.API,
+	generator job.ISOInstallConfigGenerator,
 	eventsHandler events.Handler,
 	s3Client awsS3CLient.S3Client,
 ) *bareMetalInventory {
@@ -145,103 +127,25 @@ func NewBareMetalInventory(
 		debugCmdMap:   make(map[strfmt.UUID]debugCmd),
 		hostApi:       hostApi,
 		clusterApi:    clusterApi,
-		job:           jobApi,
+		generator:     generator,
 		eventsHandler: eventsHandler,
 		s3Client:      s3Client,
-	}
-	if cfg.ImageBuilderCmd != "" {
-		b.imageBuildCmd = strings.Split(cfg.ImageBuilderCmd, " ")
 	}
 
 	if b.Config.UseK8s {
 		//Run first ISO dummy for image pull, this is done so that the image will be pulled and the api will take less time.
-		generateDummyISOImage(jobApi, b, log)
+		generateDummyISOImage(generator, b, log)
 	}
 	return b
 }
 
-func generateDummyISOImage(jobApi job.API, b *bareMetalInventory, log logrus.FieldLogger) {
+func generateDummyISOImage(generator job.ISOInstallConfigGenerator, b *bareMetalInventory, log logrus.FieldLogger) {
 	dummyId := "00000000-0000-0000-0000-000000000000"
 	jobName := fmt.Sprintf("dummyimage-%s-%s", dummyId, time.Now().Format("20060102150405"))
 	imgName := fmt.Sprintf("discovery-image-%s", dummyId)
-	if err := jobApi.Create(context.Background(), b.createImageJob(jobName, imgName, "Dummy")); err != nil {
-		log.WithError(err).Errorf("failed to generate dummy ISO image")
-	}
-}
 
-func getQuantity(s string) resource.Quantity {
-	reply, _ := resource.ParseQuantity(s)
-	return reply
-}
-
-// create discovery image generation job, return job name and error
-func (b *bareMetalInventory) createImageJob(jobName, imgName, ignitionConfig string) *batch.Job {
-	return &batch.Job{
-		TypeMeta: meta.TypeMeta{
-			Kind:       "Job",
-			APIVersion: "batch/v1",
-		},
-		ObjectMeta: meta.ObjectMeta{
-			Name:      jobName,
-			Namespace: b.Namespace,
-		},
-		Spec: batch.JobSpec{
-			BackoffLimit: swag.Int32(2),
-			Template: core.PodTemplateSpec{
-				ObjectMeta: meta.ObjectMeta{
-					Name:      jobName,
-					Namespace: b.Namespace,
-				},
-				Spec: core.PodSpec{
-					Containers: []core.Container{
-						{
-							Resources: core.ResourceRequirements{
-								Limits: core.ResourceList{
-									"cpu":    getQuantity(b.JobCPULimit),
-									"memory": getQuantity(b.JobMemoryLimit),
-								},
-								Requests: core.ResourceList{
-									"cpu":    getQuantity(b.JobCPURequests),
-									"memory": getQuantity(b.JobMemoryRequests),
-								},
-							},
-							Name:            "image-creator",
-							Image:           b.Config.ImageBuilder,
-							Command:         b.imageBuildCmd,
-							ImagePullPolicy: "IfNotPresent",
-							Env: []core.EnvVar{
-								{
-									Name:  "S3_ENDPOINT_URL",
-									Value: b.S3EndpointURL,
-								},
-								{
-									Name:  "IGNITION_CONFIG",
-									Value: ignitionConfig,
-								},
-								{
-									Name:  "IMAGE_NAME",
-									Value: imgName,
-								},
-								{
-									Name:  "S3_BUCKET",
-									Value: b.S3Bucket,
-								},
-								{
-									Name:  "aws_access_key_id",
-									Value: b.AwsAccessKeyID,
-								},
-								{
-									Name:  "aws_secret_access_key",
-									Value: b.AwsSecretAccessKey,
-								},
-							},
-						},
-					},
-					RestartPolicy: "Never",
-				},
-			},
-		},
-	}
+	var cluster common.Cluster
+	generator.GenerateISO(context.Background(), cluster, jobName, imgName, "Dummy")
 }
 
 func (b *bareMetalInventory) formatIgnitionFile(cluster *common.Cluster, params installer.GenerateClusterISOParams) (string, error) {
@@ -473,17 +377,6 @@ func (b *bareMetalInventory) GenerateClusterISO(ctx context.Context, params inst
 		b.eventsHandler.AddEvent(ctx, cluster.ID.String(), "Re-used existing image rather than generating a new one", time.Now())
 		return installer.NewGenerateClusterISOCreated().WithPayload(&cluster.Cluster)
 	}
-
-	// Kill the previous job in case it's still running
-	prevJobName := fmt.Sprintf("createimage-%s-%s", cluster.ID, previousCreatedAt.Format("20060102150405"))
-	log.Info("Attempting to delete job %s", prevJobName)
-	if err := b.job.Delete(ctx, prevJobName, b.Namespace); err != nil {
-		log.WithError(err).Errorf("failed to kill previous job in cluster %s", cluster.ID)
-		return installer.NewGenerateClusterISOInternalServerError().
-			WithPayload(common.GenerateError(http.StatusInternalServerError, err))
-	}
-	log.Info("Finished attempting to delete job %s", prevJobName)
-
 	ignitionConfig, formatErr := b.formatIgnitionFile(&cluster, params)
 	if formatErr != nil {
 		log.WithError(formatErr).Errorf("failed to format ignition config file for cluster %s", cluster.ID)
@@ -491,20 +384,12 @@ func (b *bareMetalInventory) GenerateClusterISO(ctx context.Context, params inst
 			WithPayload(common.GenerateError(http.StatusInternalServerError, formatErr))
 	}
 
-	// This job name is exactly 63 characters which is the maximum for a job - be careful if modifying
 	jobName := fmt.Sprintf("createimage-%s-%s", cluster.ID, now.Format("20060102150405"))
 	imgName := getImageName(params.ClusterID)
-	log.Infof("Creating job %s", jobName)
-	if err := b.job.Create(ctx, b.createImageJob(jobName, imgName, ignitionConfig)); err != nil {
-		log.WithError(err).Error("failed to create image job")
-		return installer.NewGenerateClusterISOInternalServerError().
-			WithPayload(common.GenerateError(http.StatusInternalServerError, err))
-	}
 
-	if err := b.job.Monitor(ctx, jobName, b.Namespace); err != nil {
-		log.WithError(err).Error("image creation failed")
-		return installer.NewGenerateClusterISOInternalServerError().
-			WithPayload(common.GenerateError(http.StatusInternalServerError, err))
+	if err := b.generator.GenerateISO(ctx, cluster, jobName, imgName, ignitionConfig); err != nil {
+		log.Error("GenerateISO failed for cluster %s", cluster.ID)
+		return err
 	}
 
 	log.Infof("Generated cluster <%s> image with ignition config %s", params.ClusterID, ignitionConfig)
@@ -716,15 +601,10 @@ func (b *bareMetalInventory) generateClusterInstallConfig(ctx context.Context, c
 		log.WithError(err).Errorf("failed to get install config for cluster %s", cluster.ID)
 		return errors.Wrapf(err, "failed to get install config for cluster %s", cluster.ID)
 	}
-	jobName := fmt.Sprintf("%s-%s-%s", kubeconfigPrefix, cluster.ID.String(), uuid.New().String())[:63]
-	if err := b.job.Create(ctx, b.createKubeconfigJob(&cluster, jobName, cfg)); err != nil {
-		log.WithError(err).Errorf("Failed to create kubeconfig generation job %s for cluster %s", jobName, cluster.ID)
-		return errors.Wrapf(err, "Failed to create kubeconfig generation job %s for cluster %s", jobName, cluster.ID)
-	}
 
-	if err := b.job.Monitor(ctx, jobName, b.Namespace); err != nil {
-		log.WithError(err).Errorf("Generating kubeconfig files %s failed for cluster %s", jobName, cluster.ID)
-		return errors.Wrapf(err, "Generating kubeconfig files %s failed for cluster %s", jobName, cluster.ID)
+	if err := b.generator.GenerateInstallConfig(ctx, cluster, cfg); err != nil {
+		log.WithError(err).Errorf("Faled generating kubeconfig files for cluster %s", cluster.ID)
+		return err
 	}
 
 	return b.clusterApi.SetGeneratorVersion(&cluster, b.Config.KubeconfigGenerator, tx)
@@ -1394,85 +1274,6 @@ func (b *bareMetalInventory) EnableHost(ctx context.Context, params installer.En
 	}
 
 	return installer.NewEnableHostOK().WithPayload(&host)
-}
-
-func (b *bareMetalInventory) createKubeconfigJob(cluster *common.Cluster, jobName string, cfg []byte) *batch.Job {
-	id := cluster.ID
-	kubeConfigGeneratorImage := b.Config.KubeconfigGenerator
-	return &batch.Job{
-		TypeMeta: meta.TypeMeta{
-			Kind:       "Job",
-			APIVersion: "batch/v1",
-		},
-		ObjectMeta: meta.ObjectMeta{
-			Name:      jobName,
-			Namespace: b.Namespace,
-		},
-		Spec: batch.JobSpec{
-			BackoffLimit: swag.Int32(2),
-			Template: core.PodTemplateSpec{
-				ObjectMeta: meta.ObjectMeta{
-					Name:      jobName,
-					Namespace: b.Namespace,
-				},
-				Spec: core.PodSpec{
-					Containers: []core.Container{
-						{
-							Name:            kubeconfigPrefix,
-							Image:           kubeConfigGeneratorImage,
-							Command:         b.imageBuildCmd,
-							ImagePullPolicy: "IfNotPresent",
-							Env: []core.EnvVar{
-								{
-									Name:  "S3_ENDPOINT_URL",
-									Value: b.S3EndpointURL,
-								},
-								{
-									Name:  "INSTALLER_CONFIG",
-									Value: string(cfg),
-								},
-								{
-									Name:  "IMAGE_NAME",
-									Value: jobName,
-								},
-								{
-									Name:  "S3_BUCKET",
-									Value: b.S3Bucket,
-								},
-								{
-									Name:  "CLUSTER_ID",
-									Value: id.String(),
-								},
-								{
-									Name:  "OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE",
-									Value: OverrideImageName, //TODO: change this to match the cluster openshift version
-								},
-								{
-									Name:  "aws_access_key_id",
-									Value: b.AwsAccessKeyID,
-								},
-								{
-									Name:  "aws_secret_access_key",
-									Value: b.AwsSecretAccessKey,
-								},
-							},
-							Resources: core.ResourceRequirements{
-								Limits: core.ResourceList{
-									"cpu":    getQuantity(b.JobCPULimit),
-									"memory": getQuantity(b.JobMemoryLimit),
-								},
-								Requests: core.ResourceList{
-									"cpu":    getQuantity(b.JobCPURequests),
-									"memory": getQuantity(b.JobMemoryRequests),
-								},
-							},
-						},
-					},
-					RestartPolicy: "Never",
-				},
-			},
-		},
-	}
 }
 
 func (b *bareMetalInventory) DownloadClusterFiles(ctx context.Context, params installer.DownloadClusterFilesParams) middleware.Responder {

@@ -115,9 +115,7 @@ func main() {
 		log.Fatal("Failed to setup S3 client", err)
 	}
 
-	log.Println("Target: " + Options.Target)
-
-	var jobAPI job.API
+	var generator job.ISOInstallConfigGenerator
 
 	if Options.Target != "disconnected" {
 		var kclient client.Client
@@ -139,15 +137,14 @@ func main() {
 			kclient = nil
 		}
 
-		jobAPI = job.New(log.WithField("pkg", "k8s-job-wrapper"), kclient, Options.JobConfig)
+		generator = job.New(log.WithField("pkg", "k8s-job-wrapper"), kclient, Options.JobConfig)
 	} else {
 		// in disconnected mode, setup s3 and use localjob implementation
 		createS3Bucket(&Options.S3Config)
-
-		jobAPI = job.NewLocalJob(log.WithField("pkg", "local-job-wrapper"), Options.JobConfig)
+		generator = job.NewLocalJob(log.WithField("pkg", "local-job-wrapper"), Options.JobConfig)
 	}
 
-	bm := bminventory.NewBareMetalInventory(db, log.WithField("pkg", "Inventory"), hostApi, clusterApi, Options.BMConfig, jobAPI, eventsHandler, s3Client)
+	bm := bminventory.NewBareMetalInventory(db, log.WithField("pkg", "Inventory"), hostApi, clusterApi, Options.BMConfig, generator, eventsHandler, s3Client)
 
 	events := events.NewApi(eventsHandler, logrus.WithField("pkg", "eventsApi"))
 
