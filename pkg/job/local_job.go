@@ -41,15 +41,32 @@ func (j *localJob) GenerateInstallConfig(ctx context.Context, cluster common.Clu
 	)
 	var out bytes.Buffer
 	cmd.Stdout = &out
+	log.Println(cmd.Stdout)
+	log.Println(cmd.Env)
 	if err := cmd.Run(); err != nil {
 		log.Fatal(err)
 		return err
 	}
-	log.Println(cmd.Stdout)
 	return nil
 }
 
 func (j *localJob) GenerateISO(ctx context.Context, cluster common.Cluster, jobName string, imageName string, ignitionConfig string) *installer.GenerateClusterISOInternalServerError {
-	// TBD MGMT-1174
+	log := logutil.FromContext(ctx, j.log)
+	cmd := exec.Command("python", "./data/install_process.py")
+	cmd.Env = append(os.Environ(),
+		"S3_ENDPOINT_URL="+j.Config.S3EndpointURL,
+		"IGNITION_CONFIG="+ignitionConfig,
+		"IMAGE_NAME="+imageName,
+		"S3_BUCKET="+j.Config.S3Bucket,
+		"aws_access_key_id="+j.Config.AwsAccessKeyID,
+		"aws_secret_access_key="+j.Config.AwsSecretAccessKey,
+		"WORK_DIR=/data",
+	)
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	log.Println(cmd.Stdout)
+	if err := cmd.Run(); err != nil {
+		log.Fatal(err)
+	}
 	return nil
 }

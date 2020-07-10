@@ -1,6 +1,9 @@
 # [TODO] - remove this line, once we are ready to use openshift-installer from the release
 FROM quay.io/yshnaidm/openshift-installer AS openshift-installer
 FROM quay.io/ocpmetal/ignition-manifests-and-kubeconfig-generate:stable as config-gen
+FROM quay.io/coreos/coreos-installer:release AS coreos-installer
+FROM quay.io/ocpmetal/livecd-iso:fedora-coreos-livecd AS fedora-coreos-livecd
+FROM quay.io/ocpmetal/installer-image-build:stable AS installer-image-build
 
 FROM fedora:31
 
@@ -21,6 +24,11 @@ RUN chmod 777 $WORK_DIR
 COPY --from=openshift-installer /root/installer/openshift-install $WORK_DIR
 COPY --from=config-gen $WORK_DIR/process-ignition-manifests-and-kubeconfig.py $WORK_DIR
 
+COPY --from=coreos-installer /usr/sbin/coreos-installer $WORK_DIR
+COPY --from=fedora-coreos-livecd /root/image/livecd.iso $WORK_DIR/livecd.iso
+COPY --from=installer-image-build /data/install_process.py $WORK_DIR
+
+ENV COREOS_IMAGE=$WORK_DIR/livecd.iso
 ENV WORK_DIR=$WORK_DIR
 
 ADD build/bm-inventory /bm-inventory
