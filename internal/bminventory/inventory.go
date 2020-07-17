@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
 	"sort"
 	"strconv"
@@ -19,6 +21,7 @@ import (
 	"time"
 
 	"github.com/filanov/bm-inventory/pkg/auth"
+	"github.com/prometheus/common/log"
 
 	"github.com/filanov/bm-inventory/internal/identity"
 
@@ -90,7 +93,6 @@ The primary service is agent.service.  To watch its status run e.g
 sudo journalctl -u agent.service
 **  **  **  **  **  **  **  **  **  **  **  **  **  **  **  **  **  ** **  **  **  **  **  **  **
 `
-
 const ignitionConfigFormat = `{
 "ignition": { "version": "2.2.0" },
   "passwd": {
@@ -117,7 +119,27 @@ const ignitionConfigFormat = `{
       "path": "/etc/motd",
       "mode": 644,
       "contents": { "source": "data:,{{.AGENT_MOTD}}" }
-    }]
+    },
+	{
+	  "filesystem": "root",
+	  "path": "/etc/containers/registries.conf",
+	  "mode": 420,
+	  "overwrite": true,
+	  "contents": { "source": "{{.RegistriesMapping}}" }
+	},
+	{
+	   "filesystem": "root",
+	   "path": "/etc/pki/ca-trust/source/anchors/domain.crt",
+	   "mode": 420,
+	   "overwrite": true,
+	   "contents": { "source": "{{.AdditionalTrustBundle}}" }
+	},
+	{
+		"filesystem": "root",
+		"path": "/root/.docker/config.json",
+		"mode": 420,
+		"contents": { "source": "{{.PULL_SECRET}}" }
+	}]
   }
 }`
 
@@ -201,15 +223,39 @@ func (b *bareMetalInventory) generateDummyISOImage() {
 }
 
 func (b *bareMetalInventory) formatIgnitionFile(cluster *common.Cluster, params installer.GenerateClusterISOParams) (string, error) {
+	encoded := os.Getenv("ADDITIONAL_TRUST_BUNDLE")
+	trustca, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		log.Error("decode error:", err)
+		return "", err
+	}
+	imageContenSources := strings.Split(os.Getenv("IMAGE_CONTENT_SOURCES"), ";")
+	registriesMapping := `
+unqualified-search-registries = ["registry.access.redhat.com", "docker.io"]
+[[registry]]
+	prefix = ""
+	location = "` + imageContenSources[0] + `"
+	mirror-by-digest-only = true
+	[[registry.mirror]]
+	location = "` + os.Getenv("IMAGE_CONTENT_MIRROR") + `"
+[[registry]]
+	prefix = ""
+	location = "` + imageContenSources[1] + `"
+	mirror-by-digest-only = true
+	[[registry.mirror]]
+	location = "` + os.Getenv("IMAGE_CONTENT_MIRROR") + `"`
+
 	var ignitionParams = map[string]string{
-		"userSshKey":     b.getUserSshKey(params),
-		"AgentDockerImg": b.AgentDockerImg,
-		"InventoryURL":   b.InventoryURL,
-		"InventoryPort":  b.InventoryPort,
-		"clusterId":      cluster.ID.String(),
-		"ProxyURL":       params.ImageCreateParams.ProxyURL,
-		"PULL_SECRET":    dataurl.EncodeBytes([]byte(cluster.PullSecret)),
-		"AGENT_MOTD":     url.PathEscape(agentMessageOfTheDay),
+		"userSshKey":            b.getUserSshKey(params),
+		"AgentDockerImg":        b.AgentDockerImg,
+		"InventoryURL":          b.InventoryURL,
+		"InventoryPort":         b.InventoryPort,
+		"clusterId":             cluster.ID.String(),
+		"ProxyURL":              params.ImageCreateParams.ProxyURL,
+		"PULL_SECRET":           dataurl.EncodeBytes([]byte(cluster.PullSecret)),
+		"AGENT_MOTD":            url.PathEscape(agentMessageOfTheDay),
+		"RegistriesMapping":     dataurl.EncodeBytes([]byte(registriesMapping)),
+		"AdditionalTrustBundle": dataurl.EncodeBytes(trustca),
 	}
 	tmpl, err := template.New("ignitionConfig").Parse(ignitionConfigFormat)
 	if err != nil {

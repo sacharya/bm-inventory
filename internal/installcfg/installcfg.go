@@ -1,13 +1,18 @@
 package installcfg
 
 import (
+	"encoding/base64"
 	"fmt"
 	"net"
+	"os"
+	"strings"
 
 	"github.com/filanov/bm-inventory/internal/common"
 	"github.com/filanov/bm-inventory/models"
 	"github.com/go-openapi/swag"
+	"github.com/prometheus/common/log"
 
+	"github.com/kelseyhightower/envconfig"
 	"github.com/sirupsen/logrus"
 	"gopkg.in/yaml.v2"
 )
@@ -64,9 +69,14 @@ type InstallerConfigBaremetal struct {
 		Name     string `yaml:"name"`
 		Replicas int    `yaml:"replicas"`
 	} `yaml:"controlPlane"`
-	Platform   platform `yaml:"platform"`
-	PullSecret string   `yaml:"pullSecret"`
-	SSHKey     string   `yaml:"sshKey"`
+	Platform            platform `yaml:"platform"`
+	PullSecret          string   `yaml:"pullSecret"`
+	SSHKey              string   `yaml:"sshKey"`
+	ImageContentSources []struct {
+		Mirrors []string `yaml:"mirrors" envconfig:"IMAGE_CONTENT_MIRROR"`
+		Source  string   `yaml:"source" envconfig:"IMAGE_CONTENT_SOURCES"`
+	} `yaml:"imageContentSources"`
+	AdditionalTrustBundle string `yaml:"additionalTrustBundle"`
 }
 
 func countHostsByRole(cluster *common.Cluster, role models.HostRole) int {
@@ -80,6 +90,12 @@ func countHostsByRole(cluster *common.Cluster, role models.HostRole) int {
 }
 
 func getBasicInstallConfig(cluster *common.Cluster) *InstallerConfigBaremetal {
+	imageContenSources := strings.Split(os.Getenv("IMAGE_CONTENT_SOURCES"), ";")
+	encoded := os.Getenv("ADDITIONAL_TRUST_BUNDLE")
+	additionalTrustBundle, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		log.Error("decode error:", err)
+	}
 	return &InstallerConfigBaremetal{
 		APIVersion: "v1",
 		BaseDomain: cluster.BaseDNSDomain,
@@ -131,6 +147,24 @@ func getBasicInstallConfig(cluster *common.Cluster) *InstallerConfigBaremetal {
 		},
 		PullSecret: cluster.PullSecret,
 		SSHKey:     cluster.SSHPublicKey,
+		ImageContentSources: []struct {
+			Mirrors []string `yaml:"mirrors" envconfig:"IMAGE_CONTENT_MIRROR"`
+			Source  string   `yaml:"source" envconfig:"IMAGE_CONTENT_SOURCES"`
+		}{
+			{
+				Mirrors: []string{
+					os.Getenv("IMAGE_CONTENT_MIRROR"),
+				},
+				Source: imageContenSources[0],
+			},
+			{
+				Mirrors: []string{
+					os.Getenv("IMAGE_CONTENT_MIRROR"),
+				},
+				Source: imageContenSources[1],
+			},
+		},
+		AdditionalTrustBundle: string(additionalTrustBundle),
 	}
 }
 
@@ -196,9 +230,14 @@ func setBMPlatformInstallconfig(log logrus.FieldLogger, cluster *common.Cluster,
 
 func GetInstallConfig(log logrus.FieldLogger, cluster *common.Cluster) ([]byte, error) {
 	cfg := getBasicInstallConfig(cluster)
+	if err := envconfig.Process("install-config", cfg); err != nil {
+		log.Fatal(err.Error())
+	}
 	err := setBMPlatformInstallconfig(log, cluster, cfg)
 	if err != nil {
 		return nil, err
 	}
-	return yaml.Marshal(*cfg)
+	config, err := yaml.Marshal(*cfg)
+	log.Info("Install config yaml is:\n", string(config))
+	return config, err
 }

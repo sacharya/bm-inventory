@@ -165,7 +165,7 @@ unit-test:
 	docker stop postgres || true
 	docker run -d  --rm --name postgres -e POSTGRES_PASSWORD=admin -e POSTGRES_USER=admin -p 127.0.0.1:5432:5432 postgres:12.3-alpine -c 'max_connections=10000'
 	until PGPASSWORD=admin pg_isready -U admin --dbname postgres --host 127.0.0.1 --port 5432; do sleep 1; done
-	SKIP_UT_DB=1 go test -v $(or ${TEST}, ${TEST}, $(shell go list ./... | grep -v subsystem)) -cover || (docker stop postgres && /bin/false)
+	SKIP_UT_DB=1 IMAGE_CONTENT_SOURCES="testSource1;testSource2" go test -v $(or ${TEST}, ${TEST}, $(shell go list ./... | grep -v subsystem)) -cover || (docker stop postgres && /bin/false)
 	docker stop postgres
 
 test-onprem:
@@ -173,6 +173,7 @@ test-onprem:
 	DB_HOST=127.0.0.1 \
 	DB_PORT=5432 \
 	go test -v ./subsystem/... -count=1 -ginkgo.focus=${FOCUS} -ginkgo.v
+	IMAGE_CONTENT_SOURCES="testSource1;testSource2" go test -v $(or ${TEST}, ${TEST}, $(shell go list ./... | grep -v subsystem)) -cover
 
 #########
 # Clean #
