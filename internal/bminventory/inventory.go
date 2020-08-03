@@ -139,6 +139,13 @@ const ignitionConfigFormat = `{
 		"path": "/root/.docker/config.json",
 		"mode": 420,
 		"contents": { "source": "{{.PULL_SECRET}}" }
+	},
+	{
+		"filesystem": "root",
+		"path": "/etc/hosts",
+		"mode": 420,
+		"append": true,
+		"contents": { "source": "data:text/plain;charset=utf-8,127.0.0.1%20quay.io%20mirror.openshift.com%20registry.access.redhat.com" }
 	}]
   }
 }`
